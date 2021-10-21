@@ -94,18 +94,18 @@ while IFS='' read -r line || [[ -n "$line" ]]; do
             /usr/libexec/PlistBuddy -c "Set:CFBundleIdentifier $BUNDLEID.extra$var" "$line/Info.plist"
             var=$((var+1))
         fi
-        /usr/bin/codesign --continue -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
+        /usr/bin/codesign --continue --generate-entitlement-der -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
     elif [[ "$line" == *".framework" ]]; then
-        /usr/bin/codesign --continue -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
+        /usr/bin/codesign --continue --generate-entitlement-der -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
     elif [[ "$line" == *".dylib" ]]; then
-        /usr/bin/codesign --continue -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
+        /usr/bin/codesign --continue --generate-entitlement-der -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
     fi
 done < "$TMPDIR/components.txt"
 
 echo "Sign app"
 while IFS='' read -r line || [[ -n "$line" ]]; do
     if [[ "$line" == *".app" ]]; then
-       /usr/bin/codesign --continue -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
+       /usr/bin/codesign --continue --generate-entitlement-der -f -s "$DEVELOPER" --entitlements "$TMPDIR/entitlements.plist" "$line"
     fi
 done < "$TMPDIR/components.txt"
 
