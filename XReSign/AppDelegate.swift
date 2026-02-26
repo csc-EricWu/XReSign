@@ -19,4 +19,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }
+    // MARK: - Actions
+
+    @IBAction func actionCopyBundleID(_ sender: NSMenuItem) {
+        NotificationCenter.default.post(name: .copyBundleIDRequested, object: nil)
+    }
+}
+
+extension Notification.Name {
+    static let copyBundleIDRequested = Notification.Name("copyBundleIDRequested")
 }

@@ -8,17 +8,19 @@
 #
 
 usage="Usage example:
-$(basename "$0") -s path -c certificate [-e entitlements] [-p path] [-b identifier]
+$(basename "$0") -s path -c certificate [-e entitlements] [-p path] [-b identifier] [-v version] [-n build]
 
 where:
 -s  path to ipa file which you want to sign/resign
 -c  signing certificate Common Name from Keychain
 -e  new entitlements to change (Optional)
 -p  path to mobile provisioning file (Optional)
--b  bundle identifier (Optional)"
+-b  bundle identifier (Optional)
+-v  CFBundleShortVersionString / version (Optional)
+-n  CFBundleVersion / build number (Optional)"
 
 
-while getopts s:c:e:p:b: option
+while getopts s:c:e:p:b:v:n: option
 do
     case "${option}"
     in
@@ -31,6 +33,10 @@ do
       p) MOBILEPROV=${OPTARG}
          ;;
       b) BUNDLEID=${OPTARG}
+         ;;
+      v) VERSION=${OPTARG}
+         ;;
+      n) BUILD=${OPTARG}
          ;;
      \?) echo "invalid option: -$OPTARG" >&2
          echo "$usage" >&2
@@ -81,6 +87,15 @@ else
     /usr/libexec/PlistBuddy -c "Set:CFBundleIdentifier $BUNDLEID" "$APP_PATH/Info.plist"
 fi
 
+if [ -n "${VERSION}" ]; then
+    echo "Changing CFBundleShortVersionString with: $VERSION"
+    /usr/libexec/PlistBuddy -c "Set:CFBundleShortVersionString $VERSION" "$APP_PATH/Info.plist"
+fi
+
+if [ -n "${BUILD}" ]; then
+    echo "Changing CFBundleVersion with: $BUILD"
+    /usr/libexec/PlistBuddy -c "Set:CFBundleVersion $BUILD" "$APP_PATH/Info.plist"
+fi
 
 echo "Get list of components and sign with certificate: $DEVELOPER"
 find -d "$APP_PATH" \( -name "*.app" -o -name "*.appex" -o -name "*.framework" -o -name "*.dylib" \) > "$TMPDIR/components.txt"

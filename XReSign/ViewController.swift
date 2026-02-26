@@ -6,34 +6,44 @@
 //
 
 import Cocoa
+import UniformTypeIdentifiers
 
-class ViewController: NSViewController {
+class ViewController: NSViewController, NSControlTextEditingDelegate {
     let kLastProvisioningPathKey = "kLastProvisioningPathKey"
     let kEntitlementsPathKey = "kEntitlementsPathKey"
     let kLastBundleIdKey = "kLastBundleIdKey"
+    let kLastCertificateKey = "kLastCertificateKey"
 
     @IBOutlet var textFieldIpaPath: NSTextField!
     @IBOutlet var textFieldProvisioningPath: NSTextField!
     @IBOutlet var textFieldEntitlementsPath: NSTextField!
 
     @IBOutlet var textFieldBundleId: NSTextField!
+    @IBOutlet weak var textFieldBuild: NSTextField!
+    @IBOutlet weak var textFieldVersion: NSTextField!
     @IBOutlet var comboBoxKeychains: NSComboBox!
     @IBOutlet var comboBoxCertificates: NSComboBox!
     @IBOutlet var buttonChangeBundleId: NSButton!
     @IBOutlet var buttonResign: NSButton!
     @IBOutlet var progressIndicator: NSProgressIndicator!
     @IBOutlet var textViewLog: NSTextView!
-    
+
     fileprivate var certificates: [String] = []
     fileprivate var keychains: [String: String] = [:]
     fileprivate var tempDir: String?
     private var progressObserver: NSObjectProtocol!
     private var terminateObserver: NSObjectProtocol!
+    private var copyBundleIDObserver: NSObjectProtocol?
 
     // MARK: - Main
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        copyBundleIDObserver = NotificationCenter.default.addObserver(forName: .copyBundleIDRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.copyBundleIDToPasteboard()
+        }
+
         if let defaultProvisioning = UserDefaults.standard.string(forKey: kLastProvisioningPathKey) {
             textFieldProvisioningPath.stringValue = defaultProvisioning
         }
@@ -55,8 +65,13 @@ class ViewController: NSViewController {
 
             NOTE: Pay attention to the right pair between signing certificate and provisioning profile.
             """)
-        
+
+        textFieldIpaPath.delegate = self
         loadKeychains()
+    }
+
+    deinit {
+        copyBundleIDObserver.map { NotificationCenter.default.removeObserver($0) }
     }
 
     override var representedObject: Any? {
@@ -64,18 +79,24 @@ class ViewController: NSViewController {
             // Update the view, if already loaded.
         }
     }
-    
+
+    private func copyBundleIDToPasteboard() {
+        guard let textToCopy = textFieldBundleId.placeholderString, !textToCopy.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(textToCopy, forType: .string)
+    }
+
     private func clearLog() {
         DispatchQueue.main.async {
             self.textViewLog.string = ""
         }
     }
-    
+
     private func apppendLog(message: String) {
         if message.count == 0 {
             return
         }
-        
+
         DispatchQueue.main.async {
             var text: String
             if self.textViewLog.string.isEmpty {
@@ -88,10 +109,66 @@ class ViewController: NSViewController {
                     text.append(message)
                 }
             }
-            
+
             self.textViewLog.string = text
             self.textViewLog.scrollRangeToVisible(NSMakeRange(text.count, 0))
         }
+    }
+
+    // MARK: - IPA/ZIP Path Change - Update Placeholders from Info.plist
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === textFieldIpaPath else { return }
+        updatePlaceholdersFromPath(textFieldIpaPath.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func updatePlaceholdersFromPath(_ path: String) {
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard (ext == "ipa" || ext == "zip") && FileManager.default.fileExists(atPath: path) else {
+            restoreDefaultPlaceholders()
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.extractAndApplyPlaceholders(from: path)
+        }
+    }
+
+
+    private func extractAndApplyPlaceholders(from path: String) {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        try? FileManager.default.removeItem(at: tempDir)
+        guard (try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)) != nil else { return }
+
+        let unzipTask = Process()
+        unzipTask.launchPath = "/usr/bin/unzip"
+        unzipTask.arguments = ["-j", "-o", "-q", "-d", tempDir.path, path, "Payload/*.app/Info.plist", "-x", "*/*/*/*"]
+        unzipTask.launch()
+        unzipTask.waitUntilExit()
+        guard unzipTask.terminationStatus == 0 else { return }
+
+        let plistURL = tempDir.appendingPathComponent("Info.plist")
+        guard FileManager.default.fileExists(atPath: plistURL.path),
+              let plistData = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any] else { return }
+
+        let bundleId = plist["CFBundleIdentifier"] as? String ?? ""
+        let version = plist["CFBundleShortVersionString"] as? String ?? ""
+        let build = plist["CFBundleVersion"] as? String ?? ""
+
+        DispatchQueue.main.async { [weak self] in
+            self?.textFieldBundleId.placeholderString = bundleId
+            self?.textFieldVersion.placeholderString = version
+            self?.textFieldBuild.placeholderString = build
+        }
+    }
+
+    private func restoreDefaultPlaceholders() {
+        textFieldBundleId.placeholderString = "com.domainname.appname"
+        textFieldVersion.placeholderString = "1.0.0"
+        textFieldBuild.placeholderString = "1"
     }
 
     // MARK: - Keychains
@@ -173,8 +250,13 @@ class ViewController: NSViewController {
         DispatchQueue.main.sync {
             self.certificates.removeAll()
             self.certificates.append(contentsOf: names)
-            self.comboBoxCertificates.deselectItem(at: self.comboBoxCertificates.indexOfSelectedItem)
             self.comboBoxCertificates.reloadData()
+            if let lastCert = UserDefaults.standard.string(forKey: self.kLastCertificateKey),
+               let index = self.certificates.firstIndex(of: lastCert) {
+                self.comboBoxCertificates.selectItem(at: index)
+            } else {
+                self.comboBoxCertificates.deselectItem(at: self.comboBoxCertificates.indexOfSelectedItem)
+            }
         }
     }
 
@@ -250,29 +332,37 @@ class ViewController: NSViewController {
         return nil
     }
 
-    private func signIpaWith(path ipaPath: String, developer: String, provisioning: String, bundle: String?, entitlementsPath: String?) {
+    private func signIpaWith(path ipaPath: String, developer: String, provisioning: String, bundle: String?, entitlementsPath: String?, version: String?, build: String?) {
         guard let launchPath = Bundle.main.path(forResource: "xresign", ofType: "sh") else {
             showAlertWith(title: nil, message: "Can not find resign script to run", style: .critical)
             return
         }
-        
+
         clearLog()
 
         buttonResign.isEnabled = false
         progressIndicator.isHidden = false
         progressIndicator.startAnimation(nil)
 
+        var args = [launchPath, "-s", ipaPath, "-c", developer, "-p", provisioning, "-b", bundle ?? "", "-e", entitlementsPath ?? ""]
+        if let v = version, !v.isEmpty {
+            args.append(contentsOf: ["-v", v])
+        }
+        if let n = build, !n.isEmpty {
+            args.append(contentsOf: ["-n", n])
+        }
+
         let task: Process = Process()
         let pipe: Pipe = Pipe()
 
         task.launchPath = "/bin/sh"
-        task.arguments = [launchPath, "-s", ipaPath, "-c", developer, "-p", provisioning, "-b", bundle ?? "", "-e", entitlementsPath ?? ""]
+        task.arguments = args
         task.standardOutput = pipe
         task.standardError = pipe
 
         let handle = pipe.fileHandleForReading
         handle.waitForDataInBackgroundAndNotify()
-    
+
         progressObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name.NSFileHandleDataAvailable,
                                                                   object: handle, queue: nil) {  notification -> Void in
             let data = handle.availableData
@@ -325,10 +415,11 @@ class ViewController: NSViewController {
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
         openPanel.canChooseFiles = true
-        openPanel.allowedFileTypes = ["ipa", "IPA"]
+        openPanel.allowedContentTypes = [UTType(filenameExtension: "ipa") ?? .zip, .zip]
         openPanel.begin { (result) -> Void in
-            if result == .OK {
-                self.textFieldIpaPath.stringValue = openPanel.url?.path ?? ""
+            if result == .OK, let path = openPanel.url?.path {
+                self.textFieldIpaPath.stringValue = path
+                self.updatePlaceholdersFromPath(path)
             }
         }
     }
@@ -339,7 +430,7 @@ class ViewController: NSViewController {
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
         openPanel.canChooseFiles = true
-        openPanel.allowedFileTypes = ["ipa", "mobileprovision"]
+        openPanel.allowedContentTypes = [UTType(filenameExtension: "ipa") ?? .zip, UTType(filenameExtension: "mobileprovision") ?? .data]
         openPanel.begin { (result) -> Void in
             if result == .OK {
                 if let path = openPanel.url?.path {
@@ -396,7 +487,7 @@ class ViewController: NSViewController {
                     }
                     if entitlements.write(toFile: entitlementsPath, atomically: true) {
                         showAlertWith(title: nil, message: String(format: "get entitlements to %@", entitlementsPath), style: .informational)
-                        NSWorkspace.shared.openFile(entitlementsDir as String)
+                        NSWorkspace.shared.open(URL(fileURLWithPath: entitlementsDir as String))
                     }
                 } else {
                     // read the entitlements from the provisioning profile instead
@@ -405,7 +496,7 @@ class ViewController: NSViewController {
                     }
                     if entitlements.write(toFile: entitlementsPath, atomically: true) {
                         showAlertWith(title: nil, message: String(format: "get entitlements to %@", entitlementsPath), style: .informational)
-                        NSWorkspace.shared.openFile(entitlementsDir as String)
+                        NSWorkspace.shared.open(URL(fileURLWithPath: entitlementsDir as String))
                     }
                 }
             } else if filePath.pathExtension.lowercased() == "mobileprovision" {
@@ -437,7 +528,7 @@ class ViewController: NSViewController {
                     DispatchQueue.main.async {
                         if success {
                             self.showAlertWith(title: nil, message: String(format: "get entitlements to %@", entitlementsDir), style: .informational)
-                            NSWorkspace.shared.openFile(entitlementsDir as String)
+                            NSWorkspace.shared.open(URL(fileURLWithPath: entitlementsDir as String))
                         } else {
                             return
                         }
@@ -456,7 +547,7 @@ class ViewController: NSViewController {
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
         openPanel.canChooseFiles = true
-        openPanel.allowedFileTypes = ["plist"]
+        openPanel.allowedContentTypes = [.propertyList]
         openPanel.begin { (result) -> Void in
             if result == .OK {
                 self.textFieldEntitlementsPath.stringValue = openPanel.url?.path ?? ""
@@ -470,7 +561,7 @@ class ViewController: NSViewController {
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
         openPanel.canChooseFiles = true
-        openPanel.allowedFileTypes = ["mobileprovision"]
+        openPanel.allowedContentTypes = [UTType(filenameExtension: "mobileprovision") ?? .data]
         openPanel.begin { (result) -> Void in
             if result == .OK {
                 self.textFieldProvisioningPath.stringValue = openPanel.url?.path ?? ""
@@ -551,8 +642,13 @@ class ViewController: NSViewController {
         }
 
         UserDefaults.standard.setValue(provisioningPath, forKey: kLastProvisioningPathKey)
-        UserDefaults.standard.setValue(bundleId, forKey: kLastBundleIdKey)
-        signIpaWith(path: ipaPath, developer: commonName, provisioning: provisioningPath, bundle: bundleId, entitlementsPath: entitlementsPath)
+        if buttonChangeBundleId.state == .on {
+            UserDefaults.standard.setValue(bundleId, forKey: kLastBundleIdKey)
+        }
+        UserDefaults.standard.setValue(commonName, forKey: kLastCertificateKey)
+        let version = textFieldVersion.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = textFieldBuild.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        signIpaWith(path: ipaPath, developer: commonName, provisioning: provisioningPath, bundle: bundleId, entitlementsPath: entitlementsPath.isEmpty ? nil : entitlementsPath, version: version.isEmpty ? nil : version, build: build.isEmpty ? nil : build)
     }
 
     // MARK: - Alert
