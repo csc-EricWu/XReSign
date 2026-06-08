@@ -144,7 +144,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
         let unzipTask = Process()
         unzipTask.launchPath = "/usr/bin/unzip"
-        unzipTask.arguments = ["-j", "-o", "-q", "-d", tempDir.path, path, "Payload/*.app/Info.plist", "-x", "*/*/*/*"]
+        unzipTask.arguments = ["-j", "-o", "-q", "-d", tempDir.path, path, "Payload/*.app/Info.plist"]
         unzipTask.launch()
         unzipTask.waitUntilExit()
         guard unzipTask.terminationStatus == 0 else { return }
@@ -159,7 +159,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
         let build = plist["CFBundleVersion"] as? String ?? ""
 
         DispatchQueue.main.async { [weak self] in
-            self?.textFieldBundleId.placeholderString = bundleId
+            self?.textFieldBundleId.stringValue = bundleId
             self?.textFieldVersion.placeholderString = version
             self?.textFieldBuild.placeholderString = build
         }
