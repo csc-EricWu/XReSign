@@ -391,20 +391,120 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
     // MARK: - Entitlements
 
+    @discardableResult
+    private func runUnzip(path: String, destination: String, entries: [String], junkPaths: Bool = true, excludeDeepPaths: Bool = true) -> Bool {
+        guard !entries.isEmpty else { return false }
+        var arguments = junkPaths ? ["-u", "-j", "-o", "-q"] : ["-o", "-q"]
+        arguments += ["-d", destination, path]
+        arguments += entries
+        if excludeDeepPaths {
+            arguments += ["-x", "*/*/*/*"]
+        }
+        let task = Process()
+        task.launchPath = "/usr/bin/unzip"
+        task.arguments = arguments
+        task.launch()
+        task.waitUntilExit()
+        return task.terminationStatus == 0
+    }
+
+    private func writeEntitlementsFromExecutable(at executablePath: String, to outputPath: String) -> Bool {
+        guard let codesignData = codesignEntitlementsDataFromApp(bundlePath: executablePath),
+              let entitlements = try? PropertyListSerialization.propertyList(from: codesignData, options: [], format: nil) as? NSDictionary else {
+            return false
+        }
+        return entitlements.write(toFile: outputPath, atomically: true)
+    }
+
+    private func bundleExecutable(from infoPlistPath: String) -> String? {
+        guard let plistData = try? Data(contentsOf: URL(fileURLWithPath: infoPlistPath)),
+              let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any] else {
+            return nil
+        }
+        return plist["CFBundleExecutable"] as? String
+    }
+
+    private func findAppexInfoPlists(in directory: String) -> [String] {
+        guard let enumerator = FileManager.default.enumerator(atPath: directory) else { return [] }
+        var result: [String] = []
+        for case let item as String in enumerator {
+            guard item.hasSuffix(".appex/Info.plist") else { continue }
+            result.append((directory as NSString).appendingPathComponent(item))
+        }
+        return result
+    }
+
+    private func extractEntitlementsFromIPA(path: String, to entitlementsDir: NSString) -> [String] {
+        var savedFiles: [String] = []
+
+        // 1. 只解压主程序 embedded.mobileprovision 和 Info.plist
+        runUnzip(path: path, destination: entitlementsDir as String, entries: [
+            "Payload/*.app/embedded.mobileprovision",
+            "Payload/*.app/Info.plist"
+        ])
+
+        let mainInfoPlistPath = entitlementsDir.appendingPathComponent("Info.plist")
+        guard let mainExecutable = bundleExecutable(from: mainInfoPlistPath) else { return [] }
+
+        // 2. 只解压主程序可执行文件，再从可执行文件读取 entitlements
+        let mainExecutableEntry = (NSString("Payload/*.app/")).appendingPathComponent(mainExecutable)
+        if runUnzip(path: path, destination: entitlementsDir as String, entries: [mainExecutableEntry]) {
+            let executablePath = entitlementsDir.appendingPathComponent(mainExecutable)
+            let outputPath = entitlementsDir.appendingPathComponent("entitlements.plist")
+            if writeEntitlementsFromExecutable(at: executablePath, to: outputPath) {
+                savedFiles.append(outputPath)
+            }
+            try? FileManager.default.removeItem(atPath: executablePath)
+        }
+
+        // 3. 只解压扩展的 Info.plist（保留路径，避免多个 Info.plist 互相覆盖）
+        let appexPlistDir = entitlementsDir.appendingPathComponent("appex-plists")
+        try? FileManager.default.removeItem(atPath: appexPlistDir)
+        defer { try? FileManager.default.removeItem(atPath: appexPlistDir) }
+
+        runUnzip(path: path, destination: appexPlistDir, entries: [
+            "Payload/*.app/PlugIns/*.appex/Info.plist",
+            "Payload/*.app/Extensions/*.appex/Info.plist",
+            "Payload/*.app/Watch/*.app/PlugIns/*.appex/Info.plist",
+            "Payload/*.app/Watch/*.app/Extensions/*.appex/Info.plist"
+        ], junkPaths: false, excludeDeepPaths: false)
+
+        for localInfoPlistPath in findAppexInfoPlists(in: appexPlistDir) {
+            guard let appexExecutable = bundleExecutable(from: localInfoPlistPath) else { continue }
+
+            let relativePath = String(localInfoPlistPath.dropFirst(appexPlistDir.count + 1))
+            let appexPrefix = (relativePath as NSString).deletingLastPathComponent
+            let appexName = ((appexPrefix as NSString).lastPathComponent as NSString).deletingPathExtension
+            let appexExecutableEntry = (appexPrefix as NSString).appendingPathComponent(appexExecutable)
+            let outputPath = entitlementsDir.appendingPathComponent("\(appexName).appex.entitlements.plist")
+
+            guard runUnzip(path: path, destination: entitlementsDir as String, entries: [appexExecutableEntry], excludeDeepPaths: false) else { continue }
+
+            let executablePath = entitlementsDir.appendingPathComponent(appexExecutable)
+            guard FileManager.default.fileExists(atPath: executablePath) else { continue }
+            if writeEntitlementsFromExecutable(at: executablePath, to: outputPath) {
+                savedFiles.append(outputPath)
+            }
+            try? FileManager.default.removeItem(atPath: executablePath)
+        }
+
+        return savedFiles
+    }
+
     func codesignEntitlementsDataFromApp(bundlePath: String) -> Data? {
-//          // get entitlements: codesign -d <AppBinary> --entitlements :-
+        // codesign -d --entitlements - --xml <binary>  (:- is deprecated)
         let codesignTask: Process = Process()
         let pipe: Pipe = Pipe()
 
         codesignTask.launchPath = "/usr/bin/codesign"
         codesignTask.standardOutput = pipe
-//        codesignTask.standardError = pipe
-        codesignTask.arguments = ["-d", bundlePath, "--entitlements", ":-"]
+        // stderr has diagnostic output; don't merge with stdout or plist parsing breaks
+        codesignTask.arguments = ["-d", bundlePath, "--entitlements", "-", "--xml"]
 
         codesignTask.launch()
         let pipeData = pipe.fileHandleForReading.readDataToEndOfFile()
         codesignTask.waitUntilExit()
-        return pipeData
+        return pipeData.isEmpty ? nil : pipeData
     }
 
     // MARK: - Actions
@@ -443,7 +543,6 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
             let filePath = path as NSString
             let ipaDir = URL(fileURLWithPath: path).deletingLastPathComponent().path as NSString
             let entitlementsDir = ipaDir.appendingPathComponent("entitlements") as NSString
-            let entitlementsPath = entitlementsDir.appendingPathComponent("entitlements.plist")
 
             if !FileManager.default.fileExists(atPath: String(entitlementsDir)) {
                 //            try? FileManager.default.removeItem(atPath: String(currentTempDirFolder))
@@ -451,51 +550,17 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
             }
 
             if filePath.pathExtension.lowercased() == "ipa" {
-                var unzipTask: Process = Process()
-                unzipTask.launchPath = "/usr/bin/unzip"
-
-                unzipTask.arguments = ["-u", "-j", "-o", "-q", "-d", String(entitlementsDir), path, "Payload/*.app/embedded.mobileprovision", "Payload/*.app/Info.plist", "-x", "*/*/*/*"]
-
-                unzipTask.launch()
-                unzipTask.waitUntilExit()
-
-                let plistPath = entitlementsDir.appendingPathComponent("Info.plist")
-                guard let appPlist = try? Data(contentsOf: URL(fileURLWithPath: plistPath)) else {
-                    return
-                }
-                guard let appPropertyList = try? PropertyListSerialization.propertyList(from: appPlist, options: PropertyListSerialization.ReadOptions(), format: nil) else {
-                    return
-                }
-                guard let pListDict = appPropertyList as? Dictionary<String, AnyObject> else {
-                    return
-                }
-                guard let bundleExecutable = pListDict["CFBundleExecutable"] as? String else {
-                    return
-                }
-                let bundlePath = NSString("Payload/*.app/").appendingPathComponent(bundleExecutable)
-
-                unzipTask = Process()
-                unzipTask.launchPath = "/usr/bin/unzip"
-                unzipTask.arguments = ["-u", "-j", "-o", "-q", "-d", String(entitlementsDir), path, bundlePath, "-x", "*/*/*/*"]
-                unzipTask.launch()
-                unzipTask.waitUntilExit()
-
-                if let codesignEntitlementsData = codesignEntitlementsDataFromApp(bundlePath: entitlementsDir.appendingPathComponent(bundleExecutable)) {
-                    // read the entitlements directly from the codesign output
-                    guard let entitlements = try? PropertyListSerialization.propertyList(from: codesignEntitlementsData, options: PropertyListSerialization.ReadOptions(), format: nil) as? NSDictionary else {
-                        return
-                    }
-                    if entitlements.write(toFile: entitlementsPath, atomically: true) {
-                        showAlertWith(title: nil, message: String(format: "get entitlements to %@", entitlementsPath), style: .informational)
-                        NSWorkspace.shared.open(URL(fileURLWithPath: entitlementsDir as String))
-                    }
-                } else {
-                    // read the entitlements from the provisioning profile instead
-                    guard let entitlements = pListDict["Entitlements"] as? NSDictionary else {
-                        return
-                    }
-                    if entitlements.write(toFile: entitlementsPath, atomically: true) {
-                        showAlertWith(title: nil, message: String(format: "get entitlements to %@", entitlementsPath), style: .informational)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let savedFiles = self.extractEntitlementsFromIPA(path: path, to: entitlementsDir)
+                    DispatchQueue.main.async {
+                        if savedFiles.isEmpty {
+                            self.showAlertWith(title: nil, message: "Failed to extract entitlements from IPA", style: .critical)
+                            return
+                        }
+                        let message = savedFiles.count == 1
+                            ? String(format: "get entitlements to %@", savedFiles[0])
+                            : String(format: "get %d entitlements files to %@", savedFiles.count, entitlementsDir)
+                        self.showAlertWith(title: nil, message: message, style: .informational)
                         NSWorkspace.shared.open(URL(fileURLWithPath: entitlementsDir as String))
                     }
                 }
