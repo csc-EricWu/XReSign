@@ -28,9 +28,20 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
     @IBOutlet var progressIndicator: NSProgressIndicator!
     @IBOutlet var textViewLog: NSTextView!
 
-    fileprivate var certificates: [String] = []
+    fileprivate struct SigningCertificate {
+        let commonName: String
+        let status: String
+
+        var displayName: String {
+            "\(commonName) (\(status))"
+        }
+    }
+
+    fileprivate var certificates: [SigningCertificate] = []
     fileprivate var keychains: [String: String] = [:]
     fileprivate var tempDir: String?
+    private let certificatePlaceholder = "Select a signing certificate"
+    private let certificateLoadingPlaceholder = "Loading certificates..."
     private var progressObserver: NSObjectProtocol!
     private var terminateObserver: NSObjectProtocol!
     private var copyBundleIDObserver: NSObjectProtocol?
@@ -216,7 +227,16 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
     // MARK: - Certificates
 
+    private func setCertificateComboPlaceholder(_ text: String) {
+        comboBoxCertificates.placeholderString = text
+    }
+
     private func loadCertificatesFromKeychain(_ keychain: String) {
+        DispatchQueue.main.async {
+            self.certificates = []
+            self.setCertificateComboPlaceholder(self.certificateLoadingPlaceholder)
+        }
+
         DispatchQueue.global().async {
             let task: Process = Process()
             let pipe: Pipe = Pipe()
@@ -228,11 +248,24 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
             let handle = pipe.fileHandleForReading
             task.launch()
-            self.parseCertificatesFrom(data: handle.readDataToEndOfFile())
+            let validatedCertificates = self.parseCertificates(from: handle.readDataToEndOfFile())
+
+            DispatchQueue.main.async {
+                self.certificates = validatedCertificates
+                self.setCertificateComboPlaceholder(self.certificatePlaceholder)
+                self.comboBoxCertificates.isEnabled = true
+                self.comboBoxCertificates.reloadData()
+                if let lastCert = UserDefaults.standard.string(forKey: self.kLastCertificateKey),
+                   let index = self.certificates.firstIndex(where: { $0.commonName == lastCert }) {
+                    self.comboBoxCertificates.selectItem(at: index)
+                } else {
+                    self.comboBoxCertificates.deselectItem(at: self.comboBoxCertificates.indexOfSelectedItem)
+                }
+            }
         }
     }
 
-    private func parseCertificatesFrom(data: Data) {
+    private func parseCertificates(from data: Data) -> [SigningCertificate] {
         let buffer = String(data: data, encoding: String.Encoding.utf8)!
         var names: [String] = []
 
@@ -247,30 +280,127 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
         }
 
         names.sort(by: { $0 < $1 })
-        DispatchQueue.main.sync {
-            self.certificates.removeAll()
-            self.certificates.append(contentsOf: names)
-            self.comboBoxCertificates.reloadData()
-            if let lastCert = UserDefaults.standard.string(forKey: self.kLastCertificateKey),
-               let index = self.certificates.firstIndex(of: lastCert) {
-                self.comboBoxCertificates.selectItem(at: index)
-            } else {
-                self.comboBoxCertificates.deselectItem(at: self.comboBoxCertificates.indexOfSelectedItem)
-            }
+        return names.map { commonName -> SigningCertificate in
+            let status = self.validationStatus(for: commonName)
+            return SigningCertificate(commonName: commonName, status: status)
         }
     }
 
-    private func organizationUnitFromCertificate(by name: String) -> String? {
+    private func certificate(by commonName: String) -> SecCertificate? {
         let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
-                                    kSecAttrLabel as String: name,
+                                    kSecAttrLabel as String: commonName,
                                     kSecReturnRef as String: kCFBooleanTrue!]
 
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else {
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else {
             return nil
         }
-        let certificate = item as! SecCertificate
+        return (item as! SecCertificate)
+    }
+
+    private func configureTrustForNetworkValidation(_ trust: SecTrust) {
+        if let revocationPolicy = SecPolicyCreateRevocation(
+            kSecRevocationUseAnyAvailableMethod | kSecRevocationRequirePositiveResponse
+        ) {
+            if let codeSigningPolicy = SecPolicyCreateWithProperties(kSecPolicyAppleCodeSigning, nil) {
+                SecTrustSetPolicies(trust, [codeSigningPolicy, revocationPolicy] as CFArray)
+            }
+        }
+
+        SecTrustSetAnchorCertificatesOnly(trust, false)
+        SecTrustSetNetworkFetchAllowed(trust, true)
+
+        let options: SecTrustOptionFlags = [
+            .fetchIssuerFromNet,
+            .requireRevPerCert
+        ]
+        SecTrustSetOptions(trust, options)
+    }
+
+    private func trustResultDescription(_ value: Int) -> String {
+        switch value {
+        case 0: return "Invalid (not evaluated or invalid state)"
+        case 1: return "Proceed (explicitly trusted)"
+        case 2: return "Confirm (deprecated)"
+        case 3: return "Deny (explicitly distrusted)"
+        case 4: return "Unspecified (evaluation passed)"
+        case 5: return "RecoverableTrustFailure (chain/policy/revocation issue)"
+        case 6: return "FatalTrustFailure"
+        case 7: return "OtherError"
+        default: return "Unknown (\(value))"
+        }
+    }
+
+    private func revocationCheckedDescription(_ checked: Bool) -> String {
+        checked
+            ? "true (revocation checked, not revoked)"
+            : "false (revocation status unavailable, e.g. network timeout)"
+    }
+
+    private func printTrustEvaluationResult(_ trust: SecTrust, for commonName: String) {
+        guard let result = SecTrustCopyResult(trust) as? [String: Any] else {
+            print("[Trust] \(commonName): no result available")
+            return
+        }
+
+        print("[Trust] \(commonName):")
+        if let date = result[kSecTrustEvaluationDate as String] {
+            print("  EvaluationDate: \(date)")
+        }
+        if let revoked = result[kSecTrustRevocationChecked as String] as? Bool {
+            print("  RevocationChecked: \(revocationCheckedDescription(revoked))")
+        }
+        if let validUntil = result[kSecTrustRevocationValidUntilDate as String] {
+            print("  RevocationValidUntil: \(validUntil)")
+        }
+        if let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate] {
+            print("  Chain length: \(chain.count)")
+        }
+        if let resultValue = result[kSecTrustResultValue as String] as? NSNumber {
+            let value = resultValue.intValue
+            print("  ResultValue: \(value) - \(trustResultDescription(value))")
+        }
+    }
+
+    private func validationStatus(for commonName: String) -> String {
+        guard let certificate = certificate(by: commonName) else {
+            return "🔴Invalid"
+        }
+
+        guard let policy = SecPolicyCreateWithProperties(kSecPolicyAppleCodeSigning, nil) else {
+            return "🔴Invalid"
+        }
+        var trust: SecTrust?
+        guard SecTrustCreateWithCertificates(certificate, policy, &trust) == errSecSuccess,
+              let trust else {
+            return "🔴Invalid"
+        }
+
+        configureTrustForNetworkValidation(trust)
+
+        var error: CFError?
+        let isValid = SecTrustEvaluateWithError(trust, &error)
+        printTrustEvaluationResult(trust, for: commonName)
+
+        if isValid {
+            return "🟢Valid"
+        }
+
+        if let message = (error as Error?)?.localizedDescription.lowercased() {
+            if message.contains("expired") {
+                return "🔴Expired"
+            }
+            if message.contains("revoked") {
+                return "🔴Revoked"
+            }
+        }
+        return "🟡Invalid"
+    }
+
+    private func organizationUnitFromCertificate(by name: String) -> String? {
+        guard let certificate = certificate(by: name) else {
+            return nil
+        }
 
         let keys = [kSecOIDX509V1SubjectName] as CFArray
         guard let subjectValue = SecCertificateCopyValues(certificate, keys, nil) else {
@@ -645,7 +775,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
         let bundleId: String? = buttonChangeBundleId.state == .on ? textFieldBundleId.stringValue : nil
         let index = comboBoxCertificates.indexOfSelectedItem
-        let certificateName: String? = index >= 0 ? certificates[index] : nil
+        let certificateName: String? = index >= 0 ? certificates[index].commonName : nil
 
         if ipaPath.isEmpty {
             showAlertWith(title: nil, message: "IPA file not selected", style: .critical)
@@ -656,6 +786,14 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
             showAlertWith(title: nil, message: "Signing certificate not selected", style: .critical)
             return
         }
+
+        // if let selectedCertificate = certificates.first(where: { $0.commonName == commonName }),
+        //    selectedCertificate.status != "Valid" {
+        //     showAlertWith(title: nil,
+        //                   message: "Selected certificate is \(selectedCertificate.status.lowercased()).",
+        //                   style: .critical)
+        //     return
+        // }
 
         tempDir = URL(fileURLWithPath: ipaPath).deletingLastPathComponent().path
         tempDir?.append("/tmp")
@@ -759,7 +897,7 @@ extension ViewController: NSComboBoxDataSource {
         if comboBox === comboBoxKeychains {
             return Array(keychains.keys)[index]
         } else if comboBox === comboBoxCertificates {
-            return certificates[index]
+            return certificates[index].displayName
         }
         return nil
     }

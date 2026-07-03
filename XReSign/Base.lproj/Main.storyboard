@@ -91,7 +91,7 @@
                         <rect key="frame" x="0.0" y="0.0" width="800" height="450"/>
                         <autoresizingMask key="autoresizingMask"/>
                         <subviews>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="XkL-x1-6qe">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="XkL-x1-6qe">
                                 <rect key="frame" x="20" y="406" width="497" height="24"/>
                                 <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" placeholderString="/path/to/app.ipa" drawsBackground="YES" id="TSd-EA-bto">
                                     <font key="font" metaFont="system"/>
@@ -112,7 +112,7 @@
                                     <action selector="actionBrowseIpa:" target="XfG-lQ-9wD" id="Bj2-gR-l1Q"/>
                                 </connections>
                             </button>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="8xf-DI-m2E">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="8xf-DI-m2E">
                                 <rect key="frame" x="20" y="372" width="630" height="24"/>
                                 <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" placeholderString="/path/to/.mobileprovision" drawsBackground="YES" id="ooN-Cb-ZR5">
                                     <font key="font" metaFont="system"/>
@@ -133,7 +133,7 @@
                                     <action selector="actionBrowseProvisioning:" target="XfG-lQ-9wD" id="8oZ-EF-mmF"/>
                                 </connections>
                             </button>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="YKh-yX-Do1">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="YKh-yX-Do1">
                                 <rect key="frame" x="20" y="342" width="630" height="20"/>
                                 <constraints>
                                     <constraint firstAttribute="height" constant="20" id="maO-Vi-lk9"/>
@@ -158,7 +158,7 @@
                                     <action selector="actionBrowsEntitlements:" target="XfG-lQ-9wD" id="UaG-DW-D0y"/>
                                 </connections>
                             </button>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="qFl-Kj-XdJ">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="qFl-Kj-XdJ">
                                 <rect key="frame" x="20" y="274" width="620" height="24"/>
                                 <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" enabled="NO" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" placeholderString="com.domainname.appname" drawsBackground="YES" id="IqD-PM-V4p">
                                     <font key="font" metaFont="system"/>
@@ -179,7 +179,7 @@
                                     <action selector="actionChangeBundleId:" target="XfG-lQ-9wD" id="v8W-ac-GXs"/>
                                 </connections>
                             </button>
-                            <comboBox focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="EsQ-a2-a32">
+                            <comboBox verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="EsQ-a2-a32">
                                 <rect key="frame" x="20" y="240" width="180" height="24"/>
                                 <constraints>
                                     <constraint firstAttribute="width" constant="180" id="haV-Jm-bB5"/>
@@ -194,7 +194,7 @@
                                     <outlet property="delegate" destination="XfG-lQ-9wD" id="sP2-bT-wep"/>
                                 </connections>
                             </comboBox>
-                            <comboBox focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="AkN-A2-oPi">
+                            <comboBox verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="AkN-A2-oPi">
                                 <rect key="frame" x="210" y="240" width="570" height="24"/>
                                 <comboBoxCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" refusesFirstResponder="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" placeholderString="Select a signing certificate" drawsBackground="YES" completes="NO" usesDataSource="YES" numberOfVisibleItems="5" id="EZi-Ba-yQ6">
                                     <font key="font" metaFont="system"/>
@@ -262,7 +262,7 @@
                                     <action selector="actionGetEntitlements:" target="XfG-lQ-9wD" id="q5j-xZ-AAD"/>
                                 </connections>
                             </button>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="6tZ-dy-JvD" userLabel="version">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="6tZ-dy-JvD" userLabel="version">
                                 <rect key="frame" x="20" y="308" width="96" height="24"/>
                                 <constraints>
                                     <constraint firstAttribute="height" constant="24" id="AeH-ZE-FfZ"/>
@@ -275,7 +275,7 @@
                                     <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                 </textFieldCell>
                             </textField>
-                            <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="gCx-Xd-uyK" userLabel="build">
+                            <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="gCx-Xd-uyK" userLabel="build">
                                 <rect key="frame" x="126" y="308" width="96" height="24"/>
                                 <constraints>
                                     <constraint firstAttribute="width" constant="96" id="s4E-qu-2wM"/>
