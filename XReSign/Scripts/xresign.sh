@@ -8,7 +8,7 @@
 #
 
 usage="Usage example:
-$(basename "$0") -s path -c certificate [-e entitlements] [-p path] [-b identifier] [-v version] [-n build]
+$(basename "$0") -s path -c certificate [-e entitlements] [-p path] [-b identifier] [-d displayName] [-v version] [-n build]
 
 where:
 -s  path to ipa file which you want to sign/resign
@@ -16,11 +16,12 @@ where:
 -e  new entitlements to change (Optional)
 -p  path to mobile provisioning file (Optional)
 -b  bundle identifier (Optional)
+-d  CFBundleDisplayName / app display name (Optional)
 -v  CFBundleShortVersionString / version (Optional)
 -n  CFBundleVersion / build number (Optional)"
 
 
-while getopts s:c:e:p:b:v:n: option
+while getopts s:c:e:p:b:d:v:n: option
 do
     case "${option}"
     in
@@ -33,6 +34,8 @@ do
       p) MOBILEPROV=${OPTARG}
          ;;
       b) BUNDLEID=${OPTARG}
+         ;;
+      d) DISPLAYNAME=${OPTARG}
          ;;
       v) VERSION=${OPTARG}
          ;;
@@ -85,6 +88,15 @@ if [ -z "${BUNDLEID}" ]; then
 else
     echo "Changing bundle identifier with: $BUNDLEID"
     /usr/libexec/PlistBuddy -c "Set:CFBundleIdentifier $BUNDLEID" "$APP_PATH/Info.plist"
+fi
+
+if [ -n "${DISPLAYNAME}" ]; then
+    echo "Changing CFBundleDisplayName with: $DISPLAYNAME"
+    if /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP_PATH/Info.plist" &>/dev/null; then
+        /usr/libexec/PlistBuddy -c "Set:CFBundleDisplayName $DISPLAYNAME" "$APP_PATH/Info.plist"
+    else
+        /usr/libexec/PlistBuddy -c "Add:CFBundleDisplayName string $DISPLAYNAME" "$APP_PATH/Info.plist"
+    fi
 fi
 
 if [ -n "${VERSION}" ]; then

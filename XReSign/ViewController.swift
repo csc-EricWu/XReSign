@@ -20,6 +20,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
     @IBOutlet var textFieldBundleId: NSTextField!
     @IBOutlet weak var textFieldBuild: NSTextField!
+    @IBOutlet weak var textFieldDisplayName: NSTextField!
     @IBOutlet weak var textFieldVersion: NSTextField!
     @IBOutlet var comboBoxKeychains: NSComboBox!
     @IBOutlet var comboBoxCertificates: NSComboBox!
@@ -166,11 +167,14 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
               let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any] else { return }
 
         let bundleId = plist["CFBundleIdentifier"] as? String ?? ""
+        let displayName = plist["CFBundleDisplayName"] as? String
+            ?? plist["CFBundleName"] as? String ?? ""
         let version = plist["CFBundleShortVersionString"] as? String ?? ""
         let build = plist["CFBundleVersion"] as? String ?? ""
 
         DispatchQueue.main.async { [weak self] in
             self?.textFieldBundleId.stringValue = bundleId
+            self?.textFieldDisplayName.placeholderString = displayName
             self?.textFieldVersion.placeholderString = version
             self?.textFieldBuild.placeholderString = build
         }
@@ -178,6 +182,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
 
     private func restoreDefaultPlaceholders() {
         textFieldBundleId.placeholderString = "com.domainname.appname"
+        textFieldDisplayName.placeholderString = "App Name"
         textFieldVersion.placeholderString = "1.0.0"
         textFieldBuild.placeholderString = "1"
     }
@@ -462,7 +467,7 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
         return nil
     }
 
-    private func signIpaWith(path ipaPath: String, developer: String, provisioning: String, bundle: String?, entitlementsPath: String?, version: String?, build: String?) {
+    private func signIpaWith(path ipaPath: String, developer: String, provisioning: String, bundle: String?, entitlementsPath: String?, displayName: String?, version: String?, build: String?) {
         guard let launchPath = Bundle.main.path(forResource: "xresign", ofType: "sh") else {
             showAlertWith(title: nil, message: "Can not find resign script to run", style: .critical)
             return
@@ -475,6 +480,9 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
         progressIndicator.startAnimation(nil)
 
         var args = [launchPath, "-s", ipaPath, "-c", developer, "-p", provisioning, "-b", bundle ?? "", "-e", entitlementsPath ?? ""]
+        if let d = displayName, !d.isEmpty {
+            args.append(contentsOf: ["-d", d])
+        }
         if let v = version, !v.isEmpty {
             args.append(contentsOf: ["-v", v])
         }
@@ -849,9 +857,10 @@ class ViewController: NSViewController, NSControlTextEditingDelegate {
             UserDefaults.standard.setValue(bundleId, forKey: kLastBundleIdKey)
         }
         UserDefaults.standard.setValue(commonName, forKey: kLastCertificateKey)
+        let displayName = textFieldDisplayName.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let version = textFieldVersion.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let build = textFieldBuild.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        signIpaWith(path: ipaPath, developer: commonName, provisioning: provisioningPath, bundle: bundleId, entitlementsPath: entitlementsPath.isEmpty ? nil : entitlementsPath, version: version.isEmpty ? nil : version, build: build.isEmpty ? nil : build)
+        signIpaWith(path: ipaPath, developer: commonName, provisioning: provisioningPath, bundle: bundleId, entitlementsPath: entitlementsPath.isEmpty ? nil : entitlementsPath, displayName: displayName, version: version, build: build)
     }
 
     // MARK: - Alert
